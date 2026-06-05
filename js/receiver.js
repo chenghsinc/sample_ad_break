@@ -38,27 +38,46 @@ playerManager.setMessageInterceptor(
     cast.framework.messages.MessageType.LOAD, (loadRequestData) => {
       castDebugLogger.info('MyAPP.LOG', 'Intercepting LOAD request');
 
-      // 【安全檢查 1】確保外層物件存在
-      if (!loadRequestData) {
-        castDebugLogger.error('MyAPP.LOG', 'LoadRequestData is null or undefined.');
-        return null; // 回傳 null 會拒絕這次錯誤的請求，避免 Receiver 壞掉
-      }
+    // 【安全檢查 1】確保外層物件存在
+    if (!loadRequestData) {
+      castDebugLogger.error('MyAPP.LOG', 'LoadRequestData is null or undefined.');
+      return null; // 回傳 null 會拒絕這次錯誤的請求，避免 Receiver 壞掉
+    }
 
-      // 【安全檢查 2】如果 media 物件不存在，幫它初始化，防止後續塞廣告時出錯
-      if (!loadRequestData.media) {
-        castDebugLogger.warn('MyAPP.LOG', 'MediaInformation is missing, initializing a new one.');
-        loadRequestData.media = new cast.framework.messages.MediaInformation();
-      }
+    // 【安全檢查 2】如果 media 物件不存在，幫它初始化，防止後續塞廣告時出錯
+    if (!loadRequestData.media) {
+      castDebugLogger.warn('MyAPP.LOG', 'MediaInformation is missing, initializing a new one.');
+      loadRequestData.media = new cast.framework.messages.MediaInformation();
+    }
 
-      // 注入廣告資料
+    // 注入廣告資料
       addVASTBreaksToMedia(loadRequestData.media);
 
-      if (loadRequestData.media.contentId) {
-        castDebugLogger.warn('MyAPP.LOG', 'Playable URL: ' + loadRequestData.media.contentId);
-      }
+    if (loadRequestData.media.contentId) {
+      castDebugLogger.warn('MyAPP.LOG', 'Playable URL: ' + loadRequestData.media.contentId);
+    }
 
       return loadRequestData;
     });
+
+// 1. 監測播放器與一般錯誤事件
+playerManager.addEventListener(cast.framework.events.EventType.ERROR, (event) => {
+  castDebugLogger.error(
+    'MyAPP.LOG',
+    `Player Error - Code: ${event.detailedErrorCode}, Details:`,
+    JSON.stringify(event)
+  );
+});
+
+// 2. 針對廣告載入錯誤（BREAK_CLIP_LOADING_ERROR）進行精準攔截與記錄
+playerManager.addEventListener(cast.framework.events.EventType.BREAK_CLIP_LOADING_ERROR, (event) => {
+  castDebugLogger.warn(
+    'MyAPP.LOG',
+    `Ad Break Clip Loading Failed [ID: ${event.breakClipId}] - Reason:`,
+    JSON.stringify(event)
+  );
+});
+
 
 /**
  * Break Clip Load Interceptor
@@ -81,7 +100,7 @@ breakManager.setBreakClipLoadInterceptor((breakClip, breakContext) => {
   if (breakObj.position < 0) { 
     castDebugLogger.debug(
         'MyAPP.LOG',
-        'Break Clip Load Interceptor skipping invalid break with ID: ' + breakObj.id);
+      'Break Clip Load Interceptor skipping invalid break with ID: ' + breakObj.id);
     return null;
   } else {
     return breakClip;
@@ -107,7 +126,7 @@ breakManager.setBreakSeekInterceptor((breakSeekData) => {
   if (breakSeekData.breaks.length > 1) {
     breakSeekData.breaks.splice(1); // 省略第二個參數代表直接刪除索引 1 之後的所有元素
   }
-  
+
   return breakSeekData;
 });
 
@@ -120,8 +139,8 @@ const addVASTBreaksToMedia = (mediaInformation) => {
 
   mediaInformation.breakClips = [
     { id: 'bc1', title: 'bc1 (Pre-roll)', vastAdsRequest: { adTagUrl: generateVastUrl('preroll') } },
-    { id: 'bc2', title: 'bc2 (Mid-roll)', vastAdsRequest: { adTagUrl: generateVastUrl('midroll') } },
-    { id: 'bc3', title: 'bc3 (Mid-roll)', vastAdsRequest: { adTagUrl: generateVastUrl('midroll') } },
+    { id: 'bc2', title: 'bc2 (Mid-roll)', vastAdsRequest: {} }, //  15 秒的時候空白
+    { id: 'bc3', title: 'bc3 (Mid-roll)', vastAdsRequest: { adTagUrl: 'bcd.com' } }, // 60 秒的時候錯誤的 url
     { id: 'bc4', title: 'bc4 (Mid-roll)', vastAdsRequest: { adTagUrl: generateVastUrl('midroll') } },
     { id: 'bc5', title: 'bc5 (Mid-roll)', vastAdsRequest: { adTagUrl: generateVastUrl('midroll') } },
     { id: 'bc6', title: 'bc6 (Post-roll)', vastAdsRequest: { adTagUrl: generateVastUrl('postroll') } }
@@ -132,7 +151,7 @@ const addVASTBreaksToMedia = (mediaInformation) => {
     {id: 'b2', breakClipIds: ['bc2'], position: 15},
     {id: 'b3', breakClipIds: ['bc3', 'bc4'], position: 60},
     {id: 'b4', breakClipIds: ['bc5'], position: 100},
-    {id: 'b5', breakClipIds: ['bc6'], position: -1} // 備註：CAF SDK 預設 -1 通常代表 Post-roll
+    { id: 'b5', breakClipIds: ['bc6'], position: -1 } // 備註：CAF SDK 預設 -1 通常代表 Post-roll
   ];
 };
 
@@ -142,10 +161,10 @@ const addVASTBreaksToMedia = (mediaInformation) => {
 function generateVastUrl(position) {
   try {
     const url = new URL(
-        'https://pubads.g.doubleclick.net/gampad/ads?slotname=/124319096/external/ad_rule_samples&sz=640x480&ciu_szs=300x250&cust_params=deployment%3Ddevsite%26sample_ar%3Dpremidpost&url=&unviewed_position_start=1&output=xml_vast3&impl=s&env=vp&gdfp_req=1&ad_rule=0&vad_type=linear&pod=1&ppos=1&lip=true&min_ad_duration=0&max_ad_duration=30000&vrid=6256&video_doc_id=short_onecue&cmsid=496&kfa=0&tfcd=0');
+      'https://pubads.g.doubleclick.net/gampad/ads?slotname=/124319096/external/ad_rule_samples&sz=640x480&ciu_szs=300x250&cust_params=deployment%3Ddevsite%26sample_ar%3Dpremidpost&url=&unviewed_position_start=1&output=xml_vast3&impl=s&env=vp&gdfp_req=1&ad_rule=0&vad_type=linear&pod=1&ppos=1&lip=true&min_ad_duration=0&max_ad_duration=30000&vrid=6256&video_doc_id=short_onecue&cmsid=496&kfa=0&tfcd=0');
     url.searchParams.set('vpos', position);
     url.searchParams.set(
-        'correlator', Math.floor(Math.random() * Math.pow(10, 10)));
+      'correlator', Math.floor(Math.random() * Math.pow(10, 10)));
     return url.toString();
   } catch (e) {
     castDebugLogger.error('MyAPP.LOG', 'Failed to generate VAST URL: ' + e.message);
