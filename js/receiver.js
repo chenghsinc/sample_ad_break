@@ -69,11 +69,11 @@ playerManager.addEventListener(cast.framework.events.EventType.ERROR, (event) =>
   );
 });
 
-// 2. 針對廣告載入錯誤（BREAK_CLIP_LOADING_ERROR）進行精準攔截與記錄
-playerManager.addEventListener(cast.framework.events.EventType.BREAK_CLIP_LOADING_ERROR, (event) => {
+// 2. 針對廣告結束事件（BREAK_CLIP_ENDED）進行記錄，觀察是否因 ERROR 結束
+playerManager.addEventListener(cast.framework.events.EventType.BREAK_CLIP_ENDED, (event) => {
   castDebugLogger.warn(
     'MyAPP.LOG',
-    `Ad Break Clip Loading Failed [ID: ${event.breakClipId}] - Reason:`,
+    `Ad Break Clip Ended [ID: ${event.breakClipId}] - Details:`,
     JSON.stringify(event)
   );
 });
