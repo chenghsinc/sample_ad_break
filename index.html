@@ -2,9 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Custom CAF Receiver - Forced Subtitle Fix</title>
+  <title>Custom CAF Receiver - Forced Subtitle Fix & Ad Insertion</title>
   <!-- Load the CAF SDK -->
-<script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>  <style>
+  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <style>
     body {
       --playback-logo-image: url('https://www.gstatic.com/images/branding/googlelogo/svg/googlelogo_clr_74x24px.svg');
       background-color: #000000;
@@ -23,7 +24,37 @@
     const context = cast.framework.CastReceiverContext.getInstance();
     const playerManager = context.getPlayerManager();
 
-    // Workaround: Re-sync forced subtitles after the DAI ad break finishes
+    // 1. Intercept the LOAD message to insert a 3s demo ad at 20s
+    playerManager.setMessageInterceptor(
+      cast.framework.messages.MessageType.LOAD,
+      (loadRequestData) => {
+        console.log('Intercepting LOAD request to insert demo ad...');
+        
+        if (!loadRequestData.media) {
+          loadRequestData.media = {};
+        }
+
+        // Create the Ad Video Clip
+        const breakClip = new cast.framework.messages.BreakClip('demo_clip_1');
+        breakClip.title = '3s Demo Ad';
+        // A standard Google test ad video
+        breakClip.contentId = 'https://storage.googleapis.com/interactive-media-ads/media/android.mp4';
+        breakClip.contentType = 'video/mp4';
+        breakClip.duration = 3; // Truncate the playback to exactly 3 seconds
+
+        // Create the Ad Break on the timeline
+        // The third parameter '20' sets the ad to play at the 20-second mark
+        const adBreak = new cast.framework.messages.Break('demo_break_1', ['demo_clip_1'], 20);
+
+        // Attach them to the current playback session
+        loadRequestData.media.breaks = [adBreak];
+        loadRequestData.media.breakClips = [breakClip];
+
+        return loadRequestData;
+      }
+    );
+
+    // 2. Workaround: Re-sync forced subtitles after the DAI ad break finishes
     playerManager.addEventListener(
       cast.framework.events.EventType.BREAK_ENDED,
       () => {
@@ -37,13 +68,13 @@
           
           const textTracksManager = playerManager.getTextTracksManager();
           try {
-            // 1. Tell CAF which language to look for
+            // Tell CAF which language to look for
             textTracksManager.setActiveByLanguage(activeAudio.language);
             
-            // 2. Get the ID of the track CAF just found
+            // Get the ID of the track CAF just found
             const activeTrackIds = textTracksManager.getActiveIds();
             
-            // 3. Force the track to actually display on screen
+            // Force the track to actually display on screen
             if (activeTrackIds && activeTrackIds.length > 0) {
               textTracksManager.setActiveByIds(activeTrackIds);
               console.log(`CAF TextTracksManager forced visibility for track IDs: ${activeTrackIds}`);
@@ -60,6 +91,5 @@
 
     context.start();
   </script>
-
 </body>
 </html>
