@@ -26,39 +26,51 @@
   
 <script>
     const context = cast.framework.CastReceiverContext.getInstance();
+  const playerManager = context.getPlayerManager();
   const playbackConfig = new cast.framework.PlaybackConfig();
 
   playbackConfig.manifestHandler = (manifest) => {
-    // 1. Find all <AdaptationSet ...> opening tags
-    let patchedCount = 0;
-    
-    const patchedManifest = manifest.replace(
+    // 1. Add lang="en" to audio tracks so language matching works
+    let patched = manifest.replace(
       /<AdaptationSet([^>]+)>/g, 
       (match, attributes) => {
-        // 2. Check if it's an audio track and lacks a 'lang' attribute
         const isAudio = attributes.includes('contentType="audio"') || attributes.includes('mimeType="audio/');
-        const hasLang = attributes.includes('lang=');
-        
-        if (isAudio && !hasLang) {
-          patchedCount++;
-          // 3. Safely inject lang="en" before the closing bracket of the tag
+        if (isAudio && !attributes.includes('lang=')) {
           return `<AdaptationSet${attributes} lang="en">`;
         }
-        
-        // Return unchanged if it doesn't need patching
         return match;
       }
     );
 
-    if (patchedCount > 0) {
-      console.log(`Successfully patched ${patchedCount} audio AdaptationSet(s) with fallback 'lang="en"'.`);
-    }
+    // 2. STRIP the forced-subtitle Accessibility tag to prevent Shaka Player 
+    // from crashing when it tries to auto-play it during the text-less Ad Period.
+    patched = patched.replace(
+      /<Accessibility schemeIdUri="urn:mpeg:dash:role:2011" value="forced-subtitle"\s*\/?\>/g, 
+      ''
+    );
 
-    // Return the safe, intact string
-    return patchedManifest;
+    return patched;
   };
 
+  // 3. Manually enable the forced text track once the media safely loads
+  playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, () => {
+    const textTracksManager = playerManager.getTextTracksManager();
+    const tracks = playerManager.getTracks();
+    
+    // Find the English text track that we want to force
+    const enTextTrack = tracks.find(track => 
+      track.type === cast.framework.messages.TrackType.TEXT && 
+      track.language && track.language.startsWith('en')
+    );
+
+    if (enTextTrack) {
+      console.log('Manually activating forced subtitle track:', enTextTrack.trackId);
+      textTracksManager.setActiveByIds([enTextTrack.trackId]);
+    }
+  });
+
   context.start({ playbackConfig: playbackConfig });
+
 
 </script>
 
