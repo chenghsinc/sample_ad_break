@@ -1,107 +1,47 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Custom CAF Receiver - Debugged Forced Subtitle Fix</title>
-  
-  <!-- 1. Load CAF Receiver SDK (Latest v3) -->
-  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
-  <!-- 2. Load Cast Debug Logger SDK -->
-  <script src="https://www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
+const playbackConfig = new cast.framework.PlaybackConfig();
 
-  <style>
-    body {
-      --playback-logo-image: url('https://www.gstatic.com/images/branding/googlelogo/svg/googlelogo_clr_74x24px.svg');
-      background-color: #000000;
-      margin: 0;
-    }
-    cast-media-player {
-      width: 100vw;
-      height: 100vh;
-    }
-  </style>
-</head>
-<body>
-  <cast-media-player></cast-media-player>
-  
-  <script>
-    const context = cast.framework.CastReceiverContext.getInstance();
-    const playerManager = context.getPlayerManager();
+playbackConfig.manifestHandler = (manifest) => {
+  try {
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(manifest, 'application/xml');
     
-    // 3. Initialize Cast Debug Logger
-    const castDebugLogger = cast.debug.CastDebugLogger.getInstance();
-    const LOG_TAG = 'ForcedSubtitleFix';
+    // 1. CRITICAL: DOMParser does not throw on XML syntax errors; it returns a <parsererror> document.
+    // If parsing fails (e.g., due to unescaped '&' in ad URLs), fall back safely to the raw manifest.
+    const parserErrors = xmlDoc.getElementsByTagName('parsererror');
+    if (parserErrors.length > 0) {
+      console.warn('DOMParser failed to parse MPD XML. Falling back to unmodified manifest.', parserErrors[0].textContent);
+      return manifest;
+    }
     
-    // Configure specific tags (can be done before context start)
-    castDebugLogger.loggerLevelByTags = {
-      [LOG_TAG]: cast.debug.LoggerLevel.DEBUG
-    };
+    // 2. Use querySelectorAll to find AdaptationSets regardless of XML namespace prefixes
+    const adaptationSets = xmlDoc.querySelectorAll('AdaptationSet');
+    let patchedCount = 0;
 
-    // 4. Safely enable the logger overlay ONLY when the SDK is ready
-    context.addEventListener(cast.framework.system.EventType.READY, () => {
-      if (!castDebugLogger.debugOverlayElement_) {
-        // Enable debug logger and show the 'DEBUG MODE' overlay at top left corner
-        castDebugLogger.setEnabled(true);
-        castDebugLogger.showDebugLogs(true);
-        castDebugLogger.clearDebugLogs();
-        castDebugLogger.info(LOG_TAG, 'Receiver is READY. Debug Logger initialized successfully.');
+    adaptationSets.forEach((adSet) => {
+      const contentType = adSet.getAttribute('contentType');
+      const mimeType = adSet.getAttribute('mimeType');
+      
+      const isAudio = contentType === 'audio' || (mimeType && mimeType.startsWith('audio/'));
+      
+      // 3. If it is an audio track and lacks a 'lang' attribute, assign the default fallback
+      if (isAudio && !adSet.hasAttribute('lang')) {
+        adSet.setAttribute('lang', 'en'); // Fallback language to match your main content's forced subtitle language
+        patchedCount++;
       }
     });
-
-    // 5. Robust XML manifest patcher with debug logs
-    const playbackConfig = new cast.framework.PlaybackConfig();
     
-    playbackConfig.manifestHandler = (manifest) => {
-      castDebugLogger.debug(LOG_TAG, 'manifestHandler triggered: Parsing MPD manifest...');
-      try {
-        const parser = new DOMParser();
-        const xmlDoc = parser.parseFromString(manifest, 'application/xml');
-        
-        // Query selector matches AdaptationSets regardless of namespace prefixes
-        const adaptationSets = xmlDoc.querySelectorAll('AdaptationSet');
-        let patchedCount = 0;
-        
-        adaptationSets.forEach((adSet, index) => {
-          const contentType = adSet.getAttribute('contentType');
-          const mimeType = adSet.getAttribute('mimeType');
-          const isAudio = contentType === 'audio' || (mimeType && mimeType.startsWith('audio/'));
-          
-          if (isAudio) {
-            const currentLang = adSet.getAttribute('lang');
-            const adSetId = adSet.getAttribute('id') || `index-${index}`;
-            
-            if (!currentLang) {
-              castDebugLogger.warn(
-                LOG_TAG, 
-                `[BUG TRIGGER DETECTED] Audio AdaptationSet (ID: ${adSetId}) lacks a 'lang' attribute! Patching to 'en'.`
-              );
-              adSet.setAttribute('lang', 'en');
-              patchedCount++;
-            } else {
-              castDebugLogger.debug(
-                LOG_TAG, 
-                `Audio AdaptationSet (ID: ${adSetId}) already has lang='${currentLang}'. Skipping.`
-              );
-            }
-          }
-        });
-        
-        if (patchedCount > 0) {
-          castDebugLogger.info(LOG_TAG, `Manifest patched successfully. Fixed ${patchedCount} track(s).`);
-        } else {
-          castDebugLogger.debug(LOG_TAG, 'No adaptation sets needed patching.');
-        }
-        
-        const serializer = new XMLSerializer();
-        return serializer.serializeToString(xmlDoc);
-      } catch (error) {
-        castDebugLogger.error(LOG_TAG, 'Failed to parse and patch manifest XML:', error);
-        return manifest;
-      }
-    };
+    if (patchedCount > 0) {
+      console.log(`Successfully patched ${patchedCount} audio AdaptationSet(s) with fallback 'lang="en"'.`);
+      const serializer = new XMLSerializer();
+      return serializer.serializeToString(xmlDoc);
+    }
+    
+    return manifest;
+  } catch (error) {
+    console.error('Failed to process manifest, falling back to raw manifest:', error);
+    return manifest;
+  }
+};
 
-    // 6. Start receiver session with the configuration
-    context.start({ playbackConfig: playbackConfig });
-  </script>
-</body>
-</html>
+// Start receiver with custom PlaybackConfig
+context.start({ playbackConfig: playbackConfig });
