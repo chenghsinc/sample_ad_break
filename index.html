@@ -2,12 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Custom CAF Receiver - Forced Subtitle Fix & Ad Insertion</title>
-  <!-- Load the CAF SDK -->
+  <title>Robust SSAI/DAI Web Receiver</title>
+  <!-- Load the Web Receiver SDK -->
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
   <style>
     body {
-      --playback-logo-image: url('https://www.gstatic.com/images/branding/googlelogo/svg/googlelogo_clr_74x24px.svg');
       background-color: #000000;
       margin: 0;
     }
@@ -21,75 +20,55 @@
   <cast-media-player></cast-media-player>
   
   <script>
-    const context = cast.framework.CastReceiverContext.getInstance();
-    const playerManager = context.getPlayerManager();
+    const myReceiverContext = cast.framework.CastReceiverContext.getInstance();
+    const myPlayerManager = myReceiverContext.getPlayerManager();
+    const myPlaybackConfig = new cast.framework.PlaybackConfig();
 
-    // 1. Intercept the LOAD message to insert a 3s demo ad at 20s
-    playerManager.setMessageInterceptor(
-      cast.framework.messages.MessageType.LOAD,
-      (loadRequestData) => {
-        console.log('Intercepting LOAD request to insert demo ad...');
+    /**
+     * XML-based manifest handler designed to resolve b/548205594 in DAI/SSAI.
+     * Iterates through the MPD, finds audio AdaptationSets that lack a 'lang' attribute
+     * (which typically belong to the stitched ad Periods), and dynamically injects 'en'.
+     */
+    myPlaybackConfig.manifestHandler = (manifestText) => {
+      try {
+        const parser = new DOMParser();
+        // Parse the raw DASH manifest (.mpd) XML string
+        const xmlDoc = parser.parseFromString(manifestText, 'application/xml');
         
-        if (!loadRequestData.media) {
-          loadRequestData.media = {};
-        }
+        // Query all AdaptationSets regardless of XML namespace prefixes (like 'dash:')
+        const adaptationSets = xmlDoc.querySelectorAll('AdaptationSet');
+        let patchCount = 0;
 
-        // Create the Ad Video Clip
-        const breakClip = new cast.framework.messages.BreakClip('demo_clip_1');
-        breakClip.title = '3s Demo Ad';
-        // A standard Google test ad video
-        breakClip.contentId = 'https://storage.googleapis.com/interactive-media-ads/media/android.mp4';
-        breakClip.contentType = 'video/mp4';
-        breakClip.duration = 3; // Truncate the playback to exactly 3 seconds
-
-        // Create the Ad Break on the timeline
-        // The third parameter '20' sets the ad to play at the 20-second mark
-        const adBreak = new cast.framework.messages.Break('demo_break_1', ['demo_clip_1'], 20);
-
-        // Attach them to the current playback session
-        loadRequestData.media.breaks = [adBreak];
-        loadRequestData.media.breakClips = [breakClip];
-
-        return loadRequestData;
-      }
-    );
-
-    // 2. Workaround: Re-sync forced subtitles after the DAI ad break finishes
-    playerManager.addEventListener(
-      cast.framework.events.EventType.BREAK_ENDED,
-      () => {
-        console.log('Ad break ended. Re-evaluating forced subtitles...');
-        
-        const audioTracksManager = playerManager.getAudioTracksManager();
-        const activeAudio = audioTracksManager.getActiveTrack();
-        
-        if (activeAudio && activeAudio.language) {
-          console.log(`Active main content audio language: ${activeAudio.language}`);
+        adaptationSets.forEach((adaptationSet) => {
+          const contentType = adaptationSet.getAttribute('contentType');
+          const mimeType = adaptationSet.getAttribute('mimeType');
           
-          const textTracksManager = playerManager.getTextTracksManager();
-          try {
-            // Tell CAF which language to look for
-            textTracksManager.setActiveByLanguage(activeAudio.language);
-            
-            // Get the ID of the track CAF just found
-            const activeTrackIds = textTracksManager.getActiveIds();
-            
-            // Force the track to actually display on screen
-            if (activeTrackIds && activeTrackIds.length > 0) {
-              textTracksManager.setActiveByIds(activeTrackIds);
-              console.log(`CAF TextTracksManager forced visibility for track IDs: ${activeTrackIds}`);
-            } else {
-              console.log(`No matching text tracks found for language: ${activeAudio.language}`);
-            }
-            
-          } catch (cafError) {
-            console.warn('CAF TextTracksManager failed to set language:', cafError);
+          const isAudio = contentType === 'audio' || (mimeType && mimeType.startsWith('audio/'));
+          
+          // If it is an audio track and lacks a 'lang' attribute, assign the fallback language
+          if (isAudio && !adaptationSet.hasAttribute('lang')) {
+            // Assign 'en' (or your primary target language) so that Shaka Player's 
+            // initial variant language matching does not resolve to 'und'
+            adaptationSet.setAttribute('lang', 'en'); 
+            patchCount++;
           }
-        }
-      }
-    );
+        });
 
-    context.start();
+        if (patchCount > 0) {
+          console.log(`[ManifestWorkaround] Injected fallback language 'en' into ${patchCount} audio track(s).`);
+        }
+
+        // Serialize the modified XML back to string representation
+        const serializer = new XMLSerializer();
+        return serializer.serializeToString(xmlDoc);
+      } catch (error) {
+        console.error('[ManifestWorkaround] Failed to parse/modify MPD XML, falling back to raw manifest:', error);
+        return manifestText;
+      }
+    };
+
+    // Start the receiver context with the customized PlaybackConfig
+    myReceiverContext.start({ playbackConfig: myPlaybackConfig });
   </script>
 </body>
 </html>
