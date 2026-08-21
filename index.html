@@ -4,9 +4,7 @@
   <meta charset="UTF-8">
   <title>Custom CAF Receiver - Debugged</title>
   
-  <!-- 1. Load CAF Receiver SDK -->
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
-  <!-- 2. Load Cast Debug Logger SDK -->
   <script src="https://www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
 
   <style>
@@ -24,37 +22,30 @@
   <cast-media-player></cast-media-player>
   
   <script>
-    // 1. Initialize Cast Receiver Context
     const context = cast.framework.CastReceiverContext.getInstance();
     const playerManager = context.getPlayerManager();
 
-    // 2. Setup Cast Debug Logger for ON-SCREEN debugging
+    // Setup Cast Debug Logger
     const castDebugLogger = cast.debug.CastDebugLogger.getInstance();
     castDebugLogger.setEnabled(true);
-    
-    // WARNING: This draws the debug overlay right on your TV screen!
-    castDebugLogger.showDebugLogs(true); 
+    castDebugLogger.showDebugLogs(true); // Shows overlay on TV
 
-    // Set verbosity levels
     castDebugLogger.loggerLevelByEvents = {
       'cast.framework.events.category.CORE': cast.framework.LoggerLevel.INFO,
       'cast.framework.events.EventType.MEDIA_STATUS': cast.framework.LoggerLevel.DEBUG
     };
-    castDebugLogger.loggerLevelByTags = {
-      'MANIFEST_HANDLER': cast.framework.LoggerLevel.DEBUG,
-      'ERROR_CATCHER': cast.framework.LoggerLevel.ERROR
-    };
 
-    // 3. Catch all errors and print them to the TV screen
+    // SAFE Error logging (DO NOT use JSON.stringify on CAF events!)
     playerManager.addEventListener(cast.framework.events.EventType.ERROR, (event) => {
-      castDebugLogger.error('ERROR_CATCHER', 'Fatal Player Error: ' + JSON.stringify(event));
+      // Safely extract the error code without stringifying the whole event
+      const safeErrorMsg = `ErrorCode: ${event.detailedErrorCode}, Reason: ${event.error ? event.error.message : 'Unknown'}`;
+      castDebugLogger.error('ERROR_CATCHER', 'Fatal Player Error: ' + safeErrorMsg);
     });
 
     const playbackConfig = new cast.framework.PlaybackConfig();
 
-    // 4. Safe Manifest Handler
     playbackConfig.manifestHandler = (manifest) => {
-      castDebugLogger.info('MANIFEST_HANDLER', 'Manifest received. Patching...');
+      castDebugLogger.info('MANIFEST_HANDLER', 'Patching manifest...');
       
       let patched = manifest.replace(
         /<AdaptationSet([^>]+)>/g, 
@@ -67,19 +58,32 @@
         }
       );
 
-      // Strip forced-subtitle to prevent Shaka Player multi-period crash
+      // Strip forced-subtitle to prevent Shaka Player crash
       patched = patched.replace(
         /<Accessibility schemeIdUri="urn:mpeg:dash:role:2011" value="forced-subtitle"\s*\/?\>/g, 
         ''
       );
 
-      castDebugLogger.info('MANIFEST_HANDLER', 'Manifest patched successfully.');
       return patched;
     };
 
-    // 5. Start the Receiver
-    context.start({ playbackConfig: playbackConfig });
+    // Manually enable forced subtitle
+    playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, () => {
+      const textTracksManager = playerManager.getTextTracksManager();
+      const tracks = playerManager.getTracks();
+      
+      const enTextTrack = tracks.find(track => 
+        track.type === cast.framework.messages.TrackType.TEXT && 
+        track.language && track.language.startsWith('en')
+      );
 
+      if (enTextTrack) {
+        castDebugLogger.info('TRACK_MANAGER', 'Manually activating forced subtitle: ' + enTextTrack.trackId);
+        textTracksManager.setActiveByIds([enTextTrack.trackId]);
+      }
+    });
+
+    context.start({ playbackConfig: playbackConfig });
   </script>
 </body>
 </html>
