@@ -1,4 +1,31 @@
-const playbackConfig = new cast.framework.PlaybackConfig();
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Custom CAF Receiver - Debugged Forced Subtitle Fix</title>
+  
+  <!-- 1. Load CAF Receiver SDK (Latest v3) -->
+  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <!-- 2. Load Cast Debug Logger SDK -->
+  <script src="https://www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
+
+  <style>
+    body {
+      --playback-logo-image: url('https://www.gstatic.com/images/branding/googlelogo/svg/googlelogo_clr_74x24px.svg');
+      background-color: #000000;
+      margin: 0;
+    }
+    cast-media-player {
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <cast-media-player></cast-media-player>
+  
+  <script>
+    const playbackConfig = new cast.framework.PlaybackConfig();
 
 playbackConfig.manifestHandler = (manifest) => {
   try {
@@ -45,3 +72,7 @@ playbackConfig.manifestHandler = (manifest) => {
 
 // Start receiver with custom PlaybackConfig
 context.start({ playbackConfig: playbackConfig });
+
+  </script>
+</body>
+</html>
