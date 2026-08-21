@@ -24,55 +24,55 @@
 <body>
   <cast-media-player></cast-media-player>
   
-  <script>
-    const playbackConfig = new cast.framework.PlaybackConfig();
+<script>
+  // FIX 1: Initialize the CastReceiverContext!
+  const context = cast.framework.CastReceiverContext.getInstance();
+  
+  const playbackConfig = new cast.framework.PlaybackConfig();
 
-playbackConfig.manifestHandler = (manifest) => {
-  try {
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(manifest, 'application/xml');
-    
-    // 1. CRITICAL: DOMParser does not throw on XML syntax errors; it returns a <parsererror> document.
-    // If parsing fails (e.g., due to unescaped '&' in ad URLs), fall back safely to the raw manifest.
-    const parserErrors = xmlDoc.getElementsByTagName('parsererror');
-    if (parserErrors.length > 0) {
-      console.warn('DOMParser failed to parse MPD XML. Falling back to unmodified manifest.', parserErrors[0].textContent);
+  playbackConfig.manifestHandler = (manifest) => {
+    try {
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(manifest, 'application/xml');
+      
+      const parserErrors = xmlDoc.getElementsByTagName('parsererror');
+      if (parserErrors.length > 0) {
+        console.warn('DOMParser failed to parse MPD XML. Falling back to unmodified manifest.', parserErrors[0].textContent);
+        return manifest;
+      }
+      
+      // FIX 2: Use getElementsByTagName to avoid XML namespace parsing issues
+      const adaptationSets = Array.from(xmlDoc.getElementsByTagName('AdaptationSet'));
+      let patchedCount = 0;
+
+      adaptationSets.forEach((adSet) => {
+        const contentType = adSet.getAttribute('contentType');
+        const mimeType = adSet.getAttribute('mimeType');
+        
+        const isAudio = contentType === 'audio' || (mimeType && mimeType.startsWith('audio/'));
+        
+        if (isAudio && !adSet.hasAttribute('lang')) {
+          adSet.setAttribute('lang', 'en'); 
+          patchedCount++;
+        }
+      });
+      
+      if (patchedCount > 0) {
+        console.log(`Successfully patched ${patchedCount} audio AdaptationSet(s) with fallback 'lang="en"'.`);
+        const serializer = new XMLSerializer();
+        return serializer.serializeToString(xmlDoc);
+      }
+      
+      return manifest;
+    } catch (error) {
+      console.error('Failed to process manifest, falling back to raw manifest:', error);
       return manifest;
     }
-    
-    // 2. Use querySelectorAll to find AdaptationSets regardless of XML namespace prefixes
-    const adaptationSets = xmlDoc.querySelectorAll('AdaptationSet');
-    let patchedCount = 0;
+  };
 
-    adaptationSets.forEach((adSet) => {
-      const contentType = adSet.getAttribute('contentType');
-      const mimeType = adSet.getAttribute('mimeType');
-      
-      const isAudio = contentType === 'audio' || (mimeType && mimeType.startsWith('audio/'));
-      
-      // 3. If it is an audio track and lacks a 'lang' attribute, assign the default fallback
-      if (isAudio && !adSet.hasAttribute('lang')) {
-        adSet.setAttribute('lang', 'en'); // Fallback language to match your main content's forced subtitle language
-        patchedCount++;
-      }
-    });
-    
-    if (patchedCount > 0) {
-      console.log(`Successfully patched ${patchedCount} audio AdaptationSet(s) with fallback 'lang="en"'.`);
-      const serializer = new XMLSerializer();
-      return serializer.serializeToString(xmlDoc);
-    }
-    
-    return manifest;
-  } catch (error) {
-    console.error('Failed to process manifest, falling back to raw manifest:', error);
-    return manifest;
-  }
-};
+  // Start receiver with custom PlaybackConfig
+  context.start({ playbackConfig: playbackConfig });
+</script>
 
-// Start receiver with custom PlaybackConfig
-context.start({ playbackConfig: playbackConfig });
-
-  </script>
 </body>
 </html>
