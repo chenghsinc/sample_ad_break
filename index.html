@@ -25,53 +25,41 @@
   <cast-media-player></cast-media-player>
   
 <script>
-  // FIX 1: Initialize the CastReceiverContext!
-  const context = cast.framework.CastReceiverContext.getInstance();
-  
+    const context = cast.framework.CastReceiverContext.getInstance();
   const playbackConfig = new cast.framework.PlaybackConfig();
 
   playbackConfig.manifestHandler = (manifest) => {
-    try {
-      const parser = new DOMParser();
-      const xmlDoc = parser.parseFromString(manifest, 'application/xml');
-      
-      const parserErrors = xmlDoc.getElementsByTagName('parsererror');
-      if (parserErrors.length > 0) {
-        console.warn('DOMParser failed to parse MPD XML. Falling back to unmodified manifest.', parserErrors[0].textContent);
-        return manifest;
-      }
-      
-      // FIX 2: Use getElementsByTagName to avoid XML namespace parsing issues
-      const adaptationSets = Array.from(xmlDoc.getElementsByTagName('AdaptationSet'));
-      let patchedCount = 0;
-
-      adaptationSets.forEach((adSet) => {
-        const contentType = adSet.getAttribute('contentType');
-        const mimeType = adSet.getAttribute('mimeType');
+    // 1. Find all <AdaptationSet ...> opening tags
+    let patchedCount = 0;
+    
+    const patchedManifest = manifest.replace(
+      /<AdaptationSet([^>]+)>/g, 
+      (match, attributes) => {
+        // 2. Check if it's an audio track and lacks a 'lang' attribute
+        const isAudio = attributes.includes('contentType="audio"') || attributes.includes('mimeType="audio/');
+        const hasLang = attributes.includes('lang=');
         
-        const isAudio = contentType === 'audio' || (mimeType && mimeType.startsWith('audio/'));
-        
-        if (isAudio && !adSet.hasAttribute('lang')) {
-          adSet.setAttribute('lang', 'en'); 
+        if (isAudio && !hasLang) {
           patchedCount++;
+          // 3. Safely inject lang="en" before the closing bracket of the tag
+          return `<AdaptationSet${attributes} lang="en">`;
         }
-      });
-      
-      if (patchedCount > 0) {
-        console.log(`Successfully patched ${patchedCount} audio AdaptationSet(s) with fallback 'lang="en"'.`);
-        const serializer = new XMLSerializer();
-        return serializer.serializeToString(xmlDoc);
+        
+        // Return unchanged if it doesn't need patching
+        return match;
       }
-      
-      return manifest;
-    } catch (error) {
-      console.error('Failed to process manifest, falling back to raw manifest:', error);
-      return manifest;
+    );
+
+    if (patchedCount > 0) {
+      console.log(`Successfully patched ${patchedCount} audio AdaptationSet(s) with fallback 'lang="en"'.`);
     }
+
+    // Return the safe, intact string
+    return patchedManifest;
   };
 
-  // Start receiver with custom PlaybackConfig
   context.start({ playbackConfig: playbackConfig });
+
 </script>
 
 </body>
