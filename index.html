@@ -2,16 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Custom CAF Receiver - Debugged Forced Subtitle Fix</title>
+  <title>Custom CAF Receiver - Debugged</title>
   
-  <!-- 1. Load CAF Receiver SDK (Latest v3) -->
+  <!-- 1. Load CAF Receiver SDK -->
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
   <!-- 2. Load Cast Debug Logger SDK -->
   <script src="https://www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
 
   <style>
     body {
-      --playback-logo-image: url('https://www.gstatic.com/images/branding/googlelogo/svg/googlelogo_clr_74x24px.svg');
       background-color: #000000;
       margin: 0;
     }
@@ -24,55 +23,63 @@
 <body>
   <cast-media-player></cast-media-player>
   
-<script>
+  <script>
+    // 1. Initialize Cast Receiver Context
     const context = cast.framework.CastReceiverContext.getInstance();
-  const playerManager = context.getPlayerManager();
-  const playbackConfig = new cast.framework.PlaybackConfig();
+    const playerManager = context.getPlayerManager();
 
-  playbackConfig.manifestHandler = (manifest) => {
-    // 1. Add lang="en" to audio tracks so language matching works
-    let patched = manifest.replace(
-      /<AdaptationSet([^>]+)>/g, 
-      (match, attributes) => {
-        const isAudio = attributes.includes('contentType="audio"') || attributes.includes('mimeType="audio/');
-        if (isAudio && !attributes.includes('lang=')) {
-          return `<AdaptationSet${attributes} lang="en">`;
-        }
-        return match;
-      }
-    );
-
-    // 2. STRIP the forced-subtitle Accessibility tag to prevent Shaka Player 
-    // from crashing when it tries to auto-play it during the text-less Ad Period.
-    patched = patched.replace(
-      /<Accessibility schemeIdUri="urn:mpeg:dash:role:2011" value="forced-subtitle"\s*\/?\>/g, 
-      ''
-    );
-
-    return patched;
-  };
-
-  // 3. Manually enable the forced text track once the media safely loads
-  playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, () => {
-    const textTracksManager = playerManager.getTextTracksManager();
-    const tracks = playerManager.getTracks();
+    // 2. Setup Cast Debug Logger for ON-SCREEN debugging
+    const castDebugLogger = cast.debug.CastDebugLogger.getInstance();
+    castDebugLogger.setEnabled(true);
     
-    // Find the English text track that we want to force
-    const enTextTrack = tracks.find(track => 
-      track.type === cast.framework.messages.TrackType.TEXT && 
-      track.language && track.language.startsWith('en')
-    );
+    // WARNING: This draws the debug overlay right on your TV screen!
+    castDebugLogger.showDebugLogs(true); 
 
-    if (enTextTrack) {
-      console.log('Manually activating forced subtitle track:', enTextTrack.trackId);
-      textTracksManager.setActiveByIds([enTextTrack.trackId]);
-    }
-  });
+    // Set verbosity levels
+    castDebugLogger.loggerLevelByEvents = {
+      'cast.framework.events.category.CORE': cast.framework.LoggerLevel.INFO,
+      'cast.framework.events.EventType.MEDIA_STATUS': cast.framework.LoggerLevel.DEBUG
+    };
+    castDebugLogger.loggerLevelByTags = {
+      'MANIFEST_HANDLER': cast.framework.LoggerLevel.DEBUG,
+      'ERROR_CATCHER': cast.framework.LoggerLevel.ERROR
+    };
 
-  context.start({ playbackConfig: playbackConfig });
+    // 3. Catch all errors and print them to the TV screen
+    playerManager.addEventListener(cast.framework.events.EventType.ERROR, (event) => {
+      castDebugLogger.error('ERROR_CATCHER', 'Fatal Player Error: ' + JSON.stringify(event));
+    });
 
+    const playbackConfig = new cast.framework.PlaybackConfig();
 
-</script>
+    // 4. Safe Manifest Handler
+    playbackConfig.manifestHandler = (manifest) => {
+      castDebugLogger.info('MANIFEST_HANDLER', 'Manifest received. Patching...');
+      
+      let patched = manifest.replace(
+        /<AdaptationSet([^>]+)>/g, 
+        (match, attributes) => {
+          const isAudio = attributes.includes('contentType="audio"') || attributes.includes('mimeType="audio/');
+          if (isAudio && !attributes.includes('lang=')) {
+            return `<AdaptationSet${attributes} lang="en">`;
+          }
+          return match;
+        }
+      );
 
+      // Strip forced-subtitle to prevent Shaka Player multi-period crash
+      patched = patched.replace(
+        /<Accessibility schemeIdUri="urn:mpeg:dash:role:2011" value="forced-subtitle"\s*\/?\>/g, 
+        ''
+      );
+
+      castDebugLogger.info('MANIFEST_HANDLER', 'Manifest patched successfully.');
+      return patched;
+    };
+
+    // 5. Start the Receiver
+    context.start({ playbackConfig: playbackConfig });
+
+  </script>
 </body>
 </html>
