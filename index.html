@@ -2,11 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Robust SSAI/DAI Web Receiver</title>
-  <!-- Load the Web Receiver SDK -->
+  <title>Custom CAF Receiver - Debugged Forced Subtitle Fix</title>
+  
+  <!-- 1. Load CAF Receiver SDK -->
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <!-- 2. Load Cast Debug Logger SDK -->
+  <script src="https://www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
+
   <style>
     body {
+      --playback-logo-image: url('https://www.gstatic.com/images/branding/googlelogo/svg/googlelogo_clr_74x24px.svg');
       background-color: #000000;
       margin: 0;
     }
@@ -20,55 +25,75 @@
   <cast-media-player></cast-media-player>
   
   <script>
-    const myReceiverContext = cast.framework.CastReceiverContext.getInstance();
-    const myPlayerManager = myReceiverContext.getPlayerManager();
-    const myPlaybackConfig = new cast.framework.PlaybackConfig();
+    const context = cast.framework.CastReceiverContext.getInstance();
+    const playerManager = context.getPlayerManager();
+    
+    // 3. Initialize Cast Debug Logger
+    const castDebugLogger = cast.debug.CastDebugLogger.getInstance();
+    const LOG_TAG = 'ForcedSubtitleFix';
+    
+    // Enable debug logger overlay and set logging levels
+    castDebugLogger.setEnabled(true);
+    castDebugLogger.showDebugLogs(true); // Shows on-screen overlay text
+    
+    // Configure specific tags
+    castDebugLogger.loggerLevelByTags = {
+      [LOG_TAG]: cast.debug.LoggerLevel.DEBUG
+    };
 
-    /**
-     * XML-based manifest handler designed to resolve b/548205594 in DAI/SSAI.
-     * Iterates through the MPD, finds audio AdaptationSets that lack a 'lang' attribute
-     * (which typically belong to the stitched ad Periods), and dynamically injects 'en'.
-     */
-    myPlaybackConfig.manifestHandler = (manifestText) => {
+    // 4. Robust XML manifest patcher with debug logs
+    const playbackConfig = new cast.framework.PlaybackConfig();
+    
+    playbackConfig.manifestHandler = (manifest) => {
+      castDebugLogger.debug(LOG_TAG, 'manifestHandler triggered: Parsing MPD manifest...');
       try {
         const parser = new DOMParser();
-        // Parse the raw DASH manifest (.mpd) XML string
-        const xmlDoc = parser.parseFromString(manifestText, 'application/xml');
+        const xmlDoc = parser.parseFromString(manifest, 'application/xml');
         
-        // Query all AdaptationSets regardless of XML namespace prefixes (like 'dash:')
         const adaptationSets = xmlDoc.querySelectorAll('AdaptationSet');
-        let patchCount = 0;
-
-        adaptationSets.forEach((adaptationSet) => {
-          const contentType = adaptationSet.getAttribute('contentType');
-          const mimeType = adaptationSet.getAttribute('mimeType');
-          
+        let patchedCount = 0;
+        
+        adaptationSets.forEach((adSet, index) => {
+          const contentType = adSet.getAttribute('contentType');
+          const mimeType = adSet.getAttribute('mimeType');
           const isAudio = contentType === 'audio' || (mimeType && mimeType.startsWith('audio/'));
           
-          // If it is an audio track and lacks a 'lang' attribute, assign the fallback language
-          if (isAudio && !adaptationSet.hasAttribute('lang')) {
-            // Assign 'en' (or your primary target language) so that Shaka Player's 
-            // initial variant language matching does not resolve to 'und'
-            adaptationSet.setAttribute('lang', 'en'); 
-            patchCount++;
+          if (isAudio) {
+            const currentLang = adSet.getAttribute('lang');
+            const adSetId = adSet.getAttribute('id') || `index-${index}`;
+            
+            if (!currentLang) {
+              castDebugLogger.warn(
+                LOG_TAG, 
+                `[BUG TRIGGER DETECTED] Audio AdaptationSet (ID: ${adSetId}) lacks a 'lang' attribute! Patching to 'en'.`
+              );
+              adSet.setAttribute('lang', 'en');
+              patchedCount++;
+            } else {
+              castDebugLogger.debug(
+                LOG_TAG, 
+                `Audio AdaptationSet (ID: ${adSetId}) already has lang='${currentLang}'. Skipping.`
+              );
+            }
           }
         });
-
-        if (patchCount > 0) {
-          console.log(`[ManifestWorkaround] Injected fallback language 'en' into ${patchCount} audio track(s).`);
+        
+        if (patchedCount > 0) {
+          castDebugLogger.info(LOG_TAG, `Manifest patched successfully. Fixed ${patchedCount} track(s).`);
+        } else {
+          castDebugLogger.debug(LOG_TAG, 'No adaptation sets needed patching.');
         }
-
-        // Serialize the modified XML back to string representation
+        
         const serializer = new XMLSerializer();
         return serializer.serializeToString(xmlDoc);
       } catch (error) {
-        console.error('[ManifestWorkaround] Failed to parse/modify MPD XML, falling back to raw manifest:', error);
-        return manifestText;
+        castDebugLogger.error(LOG_TAG, 'Failed to parse and patch manifest XML:', error);
+        return manifest;
       }
     };
 
-    // Start the receiver context with the customized PlaybackConfig
-    myReceiverContext.start({ playbackConfig: myPlaybackConfig });
+    // Start receiver session
+    context.start({ playbackConfig: playbackConfig });
   </script>
 </body>
 </html>
