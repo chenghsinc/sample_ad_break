@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>Custom CAF Receiver - Debugged Forced Subtitle Fix</title>
   
-  <!-- 1. Load CAF Receiver SDK -->
+  <!-- 1. Load CAF Receiver SDK (Latest v3) -->
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
   <!-- 2. Load Cast Debug Logger SDK -->
   <script src="https://www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
@@ -32,16 +32,23 @@
     const castDebugLogger = cast.debug.CastDebugLogger.getInstance();
     const LOG_TAG = 'ForcedSubtitleFix';
     
-    // Enable debug logger overlay and set logging levels
-    castDebugLogger.setEnabled(true);
-    castDebugLogger.showDebugLogs(true); // Shows on-screen overlay text
-    
-    // Configure specific tags
+    // Configure specific tags (can be done before context start)
     castDebugLogger.loggerLevelByTags = {
       [LOG_TAG]: cast.debug.LoggerLevel.DEBUG
     };
 
-    // 4. Robust XML manifest patcher with debug logs
+    // 4. Safely enable the logger overlay ONLY when the SDK is ready
+    context.addEventListener(cast.framework.system.EventType.READY, () => {
+      if (!castDebugLogger.debugOverlayElement_) {
+        // Enable debug logger and show the 'DEBUG MODE' overlay at top left corner
+        castDebugLogger.setEnabled(true);
+        castDebugLogger.showDebugLogs(true);
+        castDebugLogger.clearDebugLogs();
+        castDebugLogger.info(LOG_TAG, 'Receiver is READY. Debug Logger initialized successfully.');
+      }
+    });
+
+    // 5. Robust XML manifest patcher with debug logs
     const playbackConfig = new cast.framework.PlaybackConfig();
     
     playbackConfig.manifestHandler = (manifest) => {
@@ -50,6 +57,7 @@
         const parser = new DOMParser();
         const xmlDoc = parser.parseFromString(manifest, 'application/xml');
         
+        // Query selector matches AdaptationSets regardless of namespace prefixes
         const adaptationSets = xmlDoc.querySelectorAll('AdaptationSet');
         let patchedCount = 0;
         
@@ -92,7 +100,7 @@
       }
     };
 
-    // Start receiver session
+    // 6. Start receiver session with the configuration
     context.start({ playbackConfig: playbackConfig });
   </script>
 </body>
