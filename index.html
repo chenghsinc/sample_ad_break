@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <title>Custom CAF Receiver - Debugged</title>
-  
+
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
   <script src="https://www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
 
@@ -12,15 +13,17 @@
       background-color: #000000;
       margin: 0;
     }
+
     cast-media-player {
       width: 100vw;
       height: 100vh;
     }
   </style>
 </head>
+
 <body>
   <cast-media-player></cast-media-player>
-  
+
   <script>
     const context = cast.framework.CastReceiverContext.getInstance();
     const playerManager = context.getPlayerManager();
@@ -28,7 +31,6 @@
     // Setup Cast Debug Logger
     const castDebugLogger = cast.debug.CastDebugLogger.getInstance();
     castDebugLogger.setEnabled(true);
-    // castDebugLogger.showDebugLogs(true); // Shows overlay on TV
 
     castDebugLogger.loggerLevelByEvents = {
       'cast.framework.events.category.CORE': cast.framework.LoggerLevel.INFO,
@@ -46,9 +48,9 @@
 
     playbackConfig.manifestHandler = (manifest) => {
       castDebugLogger.info('MANIFEST_HANDLER', 'Patching manifest...');
-      
+
       let patched = manifest.replace(
-        /<AdaptationSet([^>]+)>/g, 
+        /<AdaptationSet([^>]+)>/g,
         (match, attributes) => {
           const isAudio = attributes.includes('contentType="audio"') || attributes.includes('mimeType="audio/');
           if (isAudio && !attributes.includes('lang=')) {
@@ -60,7 +62,7 @@
 
       // Strip forced-subtitle to prevent Shaka Player crash
       patched = patched.replace(
-        /<Accessibility schemeIdUri="urn:mpeg:dash:role:2011" value="forced-subtitle"\s*\/?\>/g, 
+        /<Accessibility schemeIdUri="urn:mpeg:dash:role:2011" value="forced-subtitle"\s*\/?\>/g,
         ''
       );
 
@@ -70,10 +72,10 @@
     // Manually enable forced subtitle
     playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, () => {
       const textTracksManager = playerManager.getTextTracksManager();
-      const tracks = playerManager.getTracks();
-      
-      const enTextTrack = tracks.find(track => 
-        track.type === cast.framework.messages.TrackType.TEXT && 
+      const tracks = textTracksManager.getTracks();
+
+      const enTextTrack = tracks.find(track =>
+        track.type === cast.framework.messages.TrackType.TEXT &&
         track.language && track.language.startsWith('en')
       );
 
@@ -86,4 +88,5 @@
     context.start({ playbackConfig: playbackConfig });
   </script>
 </body>
+
 </html>
