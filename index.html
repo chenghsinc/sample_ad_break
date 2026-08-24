@@ -47,27 +47,92 @@
     const playbackConfig = new cast.framework.PlaybackConfig();
 
     playbackConfig.manifestHandler = (manifest) => {
-      castDebugLogger.info('MANIFEST_HANDLER', 'Patching manifest...');
+      castDebugLogger.info('MANIFEST_HANDLER', 'Parsing MPD with DOMParser...');
 
-      let patched = manifest.replace(
-        /<AdaptationSet([^>]+)>/g,
-        (match, attributes) => {
-          const isAudio = attributes.includes('contentType="audio"') || attributes.includes('mimeType="audio/');
-          if (isAudio && !attributes.includes('lang=')) {
-            return `<AdaptationSet${attributes} lang="en">`;
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(manifest, "text/xml");
+
+      const periods = xmlDoc.getElementsByTagName('Period');
+
+      if (periods.length > 0) {
+        // 1. 處理第一個 Period (通常是 Pre-roll 廣告)
+        const preRollPeriod = periods[0];
+        const preRollAdaptationSets = preRollPeriod.getElementsByTagName('AdaptationSet');
+
+        for (let i = 0; i < preRollAdaptationSets.length; i++) {
+          const as = preRollAdaptationSets[i];
+          const contentType = as.getAttribute('contentType');
+          const mimeType = as.getAttribute('mimeType') || '';
+
+          // 判斷是否為字幕軌
+          if (contentType === 'text' || mimeType.includes('text') || mimeType.includes('application/mp4')) {
+            // 移除所有 <Accessibility> 標籤
+            const accessibilities = as.getElementsByTagName('Accessibility');
+            while (accessibilities.length > 0) {
+              accessibilities[0].parentNode.removeChild(accessibilities[0]);
+            }
+
+            // 移除所有 <Role> 標籤
+            const roles = as.getElementsByTagName('Role');
+            while (roles.length > 0) {
+              roles[0].parentNode.removeChild(roles[0]);
+            }
+
+            // 強制賦予乾淨的預設值
+            as.setAttribute('lang', 'en');
           }
-          return match;
         }
-      );
+      }
 
-      // Strip forced-subtitle to prevent Shaka Player crash
-      patched = patched.replace(
-        /<Accessibility schemeIdUri="urn:mpeg:dash:role:2011" value="forced-subtitle"\s*\/?\>/g,
-        ''
-      );
+      // 2. 全域處理所有的 AdaptationSets
+      const allAdaptationSets = xmlDoc.getElementsByTagName('AdaptationSet');
+      for (let i = 0; i < allAdaptationSets.length; i++) {
+        const as = allAdaptationSets[i];
+        const contentType = as.getAttribute('contentType');
+        const mimeType = as.getAttribute('mimeType') || '';
 
-      return patched;
+        // ===== [音軌處理] =====
+        if (contentType === 'audio' || mimeType.includes('audio/')) {
+          // A. 補齊缺失的 lang
+          if (!as.hasAttribute('lang')) {
+            as.setAttribute('lang', 'en');
+          }
+
+          // B. 處理 Audio Description
+          const accessibilities = as.getElementsByTagName('Accessibility');
+          for (let j = 0; j < accessibilities.length; j++) {
+            const acc = accessibilities[j];
+            if (acc.getAttribute('schemeIdUri') === 'urn:tva:metadata:cs:AudioPurposeCS:2007' &&
+              acc.getAttribute('value') === '1') {
+              const labelElem = xmlDoc.createElementNS(as.namespaceURI, 'Label');
+              labelElem.textContent = 'Audio Description';
+              as.appendChild(labelElem);
+              break;
+            }
+          }
+        }
+
+        // ===== [字幕軌處理] =====
+        // 移除全域的 forced-subtitle 以防止 Shaka Player 跨段落切換時當機
+        if (contentType === 'text' || mimeType.includes('text') || mimeType.includes('application/mp4')) {
+          const accessibilities = as.getElementsByTagName('Accessibility');
+          // 移除 DOM 節點時必須使用倒序迴圈，以免 Index 錯亂
+          for (let j = accessibilities.length - 1; j >= 0; j--) {
+            const acc = accessibilities[j];
+            if (acc.getAttribute('schemeIdUri') === 'urn:mpeg:dash:role:2011' &&
+              acc.getAttribute('value') === 'forced-subtitle') {
+              acc.parentNode.removeChild(acc);
+            }
+          }
+        }
+      }
+
+      // 將修改後的 XML DOM 轉回字串交給 CAF
+      const serializer = new XMLSerializer();
+      return serializer.serializeToString(xmlDoc);
     };
+
+
 
     // Manually enable forced subtitle
     playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, () => {
