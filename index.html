@@ -74,6 +74,8 @@
       const textTracksManager = playerManager.getTextTracksManager();
       const tracks = textTracksManager.getTracks();
 
+      castDebugLogger.info('TRACK_MANAGER', 'Available Text Tracks: ' + JSON.stringify(tracks));
+
       const enTextTrack = tracks.find(track =>
         track.type === cast.framework.messages.TrackType.TEXT &&
         track.language && track.language.startsWith('en')
@@ -82,6 +84,8 @@
       if (enTextTrack) {
         castDebugLogger.info('TRACK_MANAGER', 'Manually activating forced subtitle: ' + enTextTrack.trackId);
         textTracksManager.setActiveByIds([enTextTrack.trackId]);
+      } else {
+        castDebugLogger.warn('TRACK_MANAGER', 'No English text track found!');
       }
     });
 
